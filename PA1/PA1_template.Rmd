@@ -1,0 +1,190 @@
+Assignment 1
+========================================================
+
+1) Loading and preprocessing the data
+-------------------------------------
+
+```{r setup, echo=TRUE}
+
+rm (list=ls())
+library(lubridate)
+library(lattice)
+library(sqldf)
+
+download.file(url="http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip", destfile='activity.zip')
+unzip('activity.zip', overwrite=T)
+
+amd <- read.csv('activity.csv', header = T)
+
+```
+
+```{r helperfunctions, echo=TRUE}
+
+##
+## function FixNA2 ##
+## --------------------------------------------
+## for any day that have NA values in the values of the steps, 
+## replace them with the average values of 
+## steps that are not NA for the same day 
+## --------------------------------------------
+##
+FixNA2 <- function (df) {
+  size <- nrow(df)
+  dfNoNA <- subset (df, !is.na(df$steps))
+  
+  for (i in (1:size)) 
+  {
+    if (is.na(df$steps[i])) 
+    {      
+      sdf <- subset(dfNoNA, dfNoNA$date == df$date[i])
+      avg <- ifelse (nrow(sdf) > 0,  mean(sdf$steps), 0)  
+      df$steps[i] <- avg
+    }
+  }
+  df
+}
+
+weekdays <- function (x) {
+  y <- cbind (x, 1)
+  for (i in (1:length(x))) 
+  {
+    d <- wday(x[i])
+    if (d == 1 || d == 7)
+      y[i, 2] <- 2
+  }
+  factor(y[, 2], labels=c('weekday', 'weekend'), levels=c(1, 2))
+}
+
+```
+
+#### main function for graphs and analysis.
+
+```{r mainfunction, echo=TRUE}
+
+AnalyzeAndGraph <- function (df, plotHG, plotTS, plotPanel=F, printResult=T) {
+    
+    
+    result <- sqldf(
+        ' select 
+            date as steps_date,
+            sum(steps) as steps_sum,
+            avg(steps) as steps_mean
+          from 
+            df
+          group by
+            date
+          ;     
+        '
+      )
+      
+  if (printResult)  
+    print(result)
+    
+  if (plotHG)
+      hist(result$steps_sum, xlab='Daily Steps Total', main='Histogram of Daily Steps Total')
+  
+  df.avg.step <-tapply(df$steps, df$interval, mean)
+  
+  max <- sort(df.avg.step, decreasing=T)[1]
+  max <- round(max, digits=2)
+  
+  cat(paste("Maximum numbers of average steps taken : ",  
+            max, "at", 
+            names(max), "minutes, which is at", 
+            round(strtoi(names(max), base = 0L) / 60, 2), 
+            "hours"
+     ))
+
+
+  if (plotTS) {
+    ts <- sqldf ('select avg(steps) as steps_mean, interval from df group by interval;')     
+    plot(x=ts$interval, y=ts$steps_mean, type='l', xlab='Interval', ylab='Average Steps Taken')  
+  }
+
+    
+  if (plotPanel) {
+    library(ggplot2)
+    ts <- sqldf ( '
+                    select
+                      interval, 
+                      daytype,
+                      avg(steps) as steps_mean
+                    from 
+                      df 
+                    group by 
+                      interval, 
+                      daytype
+                    order by 
+                      interval, 
+                    daytype
+                    ;
+                  ')
+
+    print(qplot(data=ts, x=interval, y=steps_mean, 
+                xlab='Interval', ylab='Average Steps Taken',
+                geom='line', facets=daytype~.))
+    }
+
+  return(result)
+}
+
+
+```
+
+2) What is the mean total number of steps take per day?
+-------------------------------------------------------
+
+```{r q2, echo=TRUE}
+
+data2 <- subset(amd, !is.na( amd$steps))
+result2 <- AnalyzeAndGraph (data2, plotHG = T, plotTS = T)
+
+NAdataset <- subset (amd, is.na(amd))
+print (paste('Number of rows that have NA in it:', nrow(NAdataset)))
+
+```
+
+3) Imputing missing values (Replacing missing values with mean values of the day for steps)
+-------------------------------------------------------------------------------------------
+
+```{r q3, echo=TRUE}
+
+data3 <- amd
+data3 <- FixNA2(data3)
+result3 <- AnalyzeAndGraph(data3, plotHG = T, plotTS = T)
+
+comparison <- merge(x=result2, y=result3, by.x='steps_date', by.y='steps_date', all.x=T, all.y=T)
+
+comparison <- comparison[, c('steps_date', 'steps_mean.x', 'steps_mean.y')]
+comparison$diff <- comparison$steps_mean.x - comparison$steps_mean.y
+
+print (comparison)
+
+```
+### Conclusion: 
+  1. after the NA values are replaced with the average values for the day, the only difference is the NA values are replaced with zero, since all the NAs are in the days were any other values are not present.
+  2. all other days, the mean and median stay the same, as there are no NA values to be replaced.
+  
+
+4) Are there differences in activity patterns between weekdays and weekends? 
+-----------------------------------------------------------------------------
+
+```{r q4, echo=TRUE}
+
+  data4 <- data3
+  data4$daytype <- weekdays(data4$date)
+  dummy <- AnalyzeAndGraph (
+              data4, 
+              plotHG=F, plotTS=F, plotPanel=T, 
+              printResult=F
+            )
+
+```
+
+### Conclusions: Yes, there are differences in activity patterns between weekdays and weekends. 
+
+1. during the weekdays, there are two peaks during early morning and late afteroon (presumbly before going to work and shortly after work, assuming the time is utc time, rather than local time), with the early morining peaks much more pronounced.
+
+2. in between the two peaks, activities are reduced.
+
+3. during the weekend, activities are move evenly spread out during the day.
